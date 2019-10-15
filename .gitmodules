@@ -1,0 +1,4 @@
+[submodule "Ishiiruka"]
+	path = Ishiiruka
+	url = https://github.com/project-slippi/Ishiiruka
+	branch = slippi

@@ -1,5 +1,5 @@
 import {
-  LOAD_ROOT_FOLDER, CHANGE_FOLDER_SELECTION, LOAD_FILES_IN_FOLDER, STORE_SCROLL_POSITION,
+  LOAD_ROOT_FOLDER, CHANGE_FOLDER_SELECTION, LOAD_FILES_IN_FOLDER, STORE_SCROLL_POSITION, SET_STATS_GAME_PAGE, STORE_FILE_LOAD_STATE,
 } from '../actions/fileLoader';
 import DolphinManager from '../domain/DolphinManager';
 
@@ -16,6 +16,8 @@ const defaultState = {
   files: [],
   folderFound: false,
   playingFile: null,
+  numFilteredFiles: 0,
+  statsGameIndex: 0,
   scrollPosition: {
     x: 0,
     y: 0,
@@ -32,6 +34,10 @@ export default function fileLoader(state = defaultState, action) {
     return loadFilesInFolder(state, action);
   case STORE_SCROLL_POSITION:
     return storeScrollPosition(state, action);
+  case STORE_FILE_LOAD_STATE:
+    return storeFileLoadState(state, action);
+  case SET_STATS_GAME_PAGE:
+    return setStatsGamePage(state, action);
   default:
     return state;
   }
@@ -70,6 +76,7 @@ function changeFolderSelection(state, action) {
     ...state,
     selectedFolderFullPath: folderPath,
     isLoading: true,
+    fileLoadState: {},
   };
 }
 
@@ -107,6 +114,8 @@ function loadFilesInFolder(state, action) {
     isLoading: false,
     files: action.payload.files,
     folders: folders,
+    numFilteredFiles: action.payload.numFilteredFiles,
+    fileLoadState: {},
   };
 }
 
@@ -114,5 +123,19 @@ function storeScrollPosition(state, action) {
   return {
     ...state,
     scrollPosition: action.payload.position,
+  };
+}
+
+function storeFileLoadState(state, action) {
+  return {
+    ...state,
+    fileLoadState: action.payload.fileLoadState,
+  };
+}
+
+function setStatsGamePage(state, action) {
+  return {
+    ...state,
+    statsGameIndex: action.payload.statsGameIndex,
   };
 }

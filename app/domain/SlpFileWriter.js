@@ -31,6 +31,7 @@ import fs from 'fs-extra';
 import path from 'path';
 import moment from 'moment';
 import OBSWebSocket from 'obs-websocket-js'
+import { Ports } from './ConsoleConnection'
 
 export default class SlpFileWriter {
   static commands = {
@@ -45,6 +46,7 @@ export default class SlpFileWriter {
     this.onFileStateChange = settings.onFileStateChange;
     this.obsSourceName = settings.obsSourceName;
     this.obsIP = settings.obsIP;
+    this.obsPassword = settings.obsPassword;
     this.id = settings.id;
     this.consoleNick = settings.consoleNick;
     this.currentFile = this.getClearedCurrentFile();
@@ -109,7 +111,7 @@ export default class SlpFileWriter {
         _.remove(this.clients, (client) => socket === client.socket);
       });
     });
-    this.server.listen(1666 + this.id, '0.0.0.0');
+    this.server.listen(Ports.RELAY_START + this.id, '0.0.0.0');
   }
 
   getCurrentFilePath() {
@@ -141,24 +143,30 @@ export default class SlpFileWriter {
     if (this.obsIP && this.obsSourceName) {
       // if you send a password when authentication is disabled, OBS will still connect
       await this.obs.connect({address: this.obsIP, password: this.obsPassword});
+      await this.obs.on("SceneItemAdded", async (data) => await this.getSceneSources()); // eslint-disable-line
+      await this.obs.on("SceneItemRemoved", async (data) => await this.getSceneSources()); // eslint-disable-line
       await this.getSceneSources();
     }
   }
 
   disconnectOBS() {
+    if (!this.obs) {
+      return;
+    }
+    
     this.obs.disconnect();
   }
 
   setStatus(value) {
     this.statusOutput.status = value;
-    console.log(`Status changed: ${value}`);
+    // console.log(`Status changed: ${value}`);
     _.forEach(this.obsPairs, (pair) => {
       this.obs.send("SetSceneItemProperties", 
         {"scene-name": pair.scene, "item": this.obsSourceName, "visible": value});
     });
   }
 
-  handleStatusOutput(timeoutLength = 100) {
+  handleStatusOutput(timeoutLength = 200) {
     const setTimer = () => {
       if (this.statusOutput.timeout) {
         // If we have a timeout, clear it
@@ -193,6 +201,9 @@ export default class SlpFileWriter {
     let isNewGame = false;
     let isGameEnd = false;
 
+    // We should technically never accrue a previous buffer with new communication methods because
+    // ConsoleCommunication ensures that full data has been received before trying to process
+    // the data
     const data = Uint8Array.from(Buffer.concat([
       this.currentFile.previousBuffer,
       newData,
@@ -541,8 +552,6 @@ export default class SlpFileWriter {
       if (endMethod !== 7) {
         this.handleStatusOutput(700);
       }
-
-      this.getSceneSources();
 
       break;
     default:

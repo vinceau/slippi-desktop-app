@@ -1,10 +1,11 @@
 import _ from 'lodash';
 import classNames from 'classnames';
 import React, { Component } from 'react';
+import semver from 'semver';
 import PropTypes from 'prop-types';
 import path from 'path';
 import { Header, Modal, Form, Card, Button, Icon, Checkbox, Message, Tab, Grid } from 'semantic-ui-react';
-import { ConnectionStatus } from '../domain/ConsoleConnection';
+import { ConnectionStatus, Ports } from '../domain/ConsoleConnection';
 import PageHeader from './common/PageHeader';
 import PageWrapper from './PageWrapper';
 import DismissibleMessage from './common/DismissibleMessage';
@@ -49,7 +50,9 @@ export default class Console extends Component {
   }
 
   addConnectionClick = () => {
-    this.props.editConnection('new');
+    this.props.editConnection('new', {
+      isRealTimeMode: true,
+    });
   };
 
   editConnectionClick = (index, defaultSettings = {}) => () => {
@@ -104,31 +107,34 @@ export default class Console extends Component {
     }
 
     // Validate that inputs are properly set
+    let hasError = false;
+    const formData = this.state.formData || {};
 
-    // Validate that target folder has been set
-    const targetFolder = _.get(this.state, ['formData', 'targetFolder']) || settings.targetFolder;
-    if (!targetFolder) {
-      // If no target folder is set, indicate the error
-      const formData = this.state.formData || {};
-      this.setState({
-        formData: {
-          ...formData,
-          validation: {
-            targetFolder: "empty",
-          },
-        },
-      });
+    const requiredInputs = ['ipAddress', 'targetFolder'];
+    requiredInputs.forEach(input => {
+      const value = _.get(this.state, ['formData', input]) || settings[input];
+      const err = !value ? "empty" : null;
+      if (err) {
+        hasError = true;
+      }
+
+      _.set(formData, ['validation', input], err);
+    });
+
+    if (hasError) {
+      this.setState({ formData: formData });
+      console.log(formData);
       return;
     }
 
     // Start with settings values and overwrite with modified
     // form data
-    const formData = {
+    const toSubmit = {
       ...settings,
       ...this.state.formData,
     };
 
-    this.props.saveConnection(settings.id, formData);
+    this.props.saveConnection(settings.id, toSubmit);
 
     // Clear formData state for next
     this.setState({
@@ -267,31 +273,50 @@ export default class Console extends Component {
   renderConnection = (connection) => {
     let relayLabelValue = null;
     if (connection.isRelaying) {
-      relayLabelValue = this.renderLabelValue("Relay Port", 1666 + connection.id);
+      relayLabelValue = this.renderLabelValue("Relay Port", Ports.RELAY_START + connection.id);
     }
-    return (<Card
-      key={`${connection.id}-${connection.ipAddress}-connection`}
-      fluid={true}
-      className={styles['card']}
-    >
-      <Card.Content className={styles['content']}>
-        <div className={styles['conn-content-grid']}>
-          {this.renderLabelValue("IP Address", connection.ipAddress)}
-          {this.renderLabelValue("Target Folder", connection.targetFolder)}
-          {relayLabelValue}
-          {this.renderStatusLabelValue(connection)}
-        </div>
-      </Card.Content>
-      <Card.Content className={styles['content']}>
-        <div className={styles['conn-button-grid']}>
-          {this.renderConnectButton(connection)}
-          {this.renderMirrorButton(connection)}
-          <div key="empty-col" />
-          {this.renderEditButton(connection)}
-          {this.renderDeleteButton(connection)}
-        </div>
-      </Card.Content>
-    </Card>
+
+    const status = connection.connectionStatus;
+    const version = connection.connDetails.version;
+    const isNintendont = connection.port === Ports.WII_DEFAULT || !connection.port;
+    const versionOutdated = !version || semver.lt(version, "1.9.0-dev-2"); // TODO: Latest Nintendont Release Version
+
+    let outdatedNotif = null;
+    if (status === ConnectionStatus.CONNECTED && isNintendont && versionOutdated) {
+      outdatedNotif = (
+        <Card.Content className={styles['warning-bar']}>
+          The Nintendont app being connected to is out of date. Please download and install the
+          latest version:
+          &nbsp;<a href="https://slippi.gg/downloads">slippi.gg/downloads</a>
+        </Card.Content>
+      );
+    }
+
+    return (
+      <Card
+        key={`${connection.id}-${connection.ipAddress}-connection`}
+        fluid={true}
+        className={styles['card']}
+      >
+        <Card.Content className={styles['content']}>
+          <div className={styles['conn-content-grid']}>
+            {this.renderLabelValue("IP Address", connection.ipAddress)}
+            {this.renderLabelValue("Target Folder", connection.targetFolder)}
+            {relayLabelValue}
+            {this.renderStatusLabelValue(connection)}
+          </div>
+        </Card.Content>
+        <Card.Content className={styles['content']}>
+          <div className={styles['conn-button-grid']}>
+            {this.renderConnectButton(connection)}
+            {this.renderMirrorButton(connection)}
+            <div key="empty-col" />
+            {this.renderEditButton(connection)}
+            {this.renderDeleteButton(connection)}
+          </div>
+        </Card.Content>
+        {outdatedNotif}
+      </Card>
     )
   };
 
@@ -399,18 +424,36 @@ export default class Console extends Component {
 
     let statusMsg = "Disconnected";
     let statusColor = "gray";
-    if (status === ConnectionStatus.CONNECTED && currentFilePath) {
-      statusMsg = `Writing file ${path.basename(currentFilePath)}`;
-      statusColor = "green";
-    } else if (status === ConnectionStatus.CONNECTED) {
+    if (status === ConnectionStatus.CONNECTED) {
       statusMsg = "Connected";
       statusColor = "green";
     } else if (status === ConnectionStatus.CONNECTING) {
       statusMsg = "Connecting...";
       statusColor = "yellow";
+    } else if (status === ConnectionStatus.RECONNECT_WAIT) {
+      statusMsg = "Waiting to Reconnect...";
+      statusColor = "yellow";
     } else if (status === ConnectionStatus.DISCONNECTED && isConnectionAvailable) {
       statusMsg = "Available";
       statusColor = "white";
+    }
+
+    const consoleNick = _.get(connection, ['connDetails', 'consoleNick']);
+    let additionalEls = [];
+    if (status === ConnectionStatus.CONNECTED && consoleNick) {
+      additionalEls = [
+        ...additionalEls,
+        <div key="consoleNick-sep">|</div>,
+        <div key="consoleNick" className="single-line">Console: {consoleNick}</div>,
+      ];
+    }
+
+    if (status === ConnectionStatus.CONNECTED && currentFilePath) {
+      additionalEls = [
+        ...additionalEls,
+        <div key="writingFile-sep">|</div>,
+        <div key="writingFile" className="single-line">Writing file {path.basename(currentFilePath)}</div>,
+      ];
     }
 
     const valueClasses = classNames({
@@ -424,9 +467,12 @@ export default class Console extends Component {
     return (
       <React.Fragment>
         <div key="label" className={styles['label']}>Status</div>
-        <SpacedGroup className={valueClasses} size="none">
-          <Icon size="tiny" name="circle" />
-          {statusMsg}
+        <SpacedGroup>
+          <SpacedGroup className={valueClasses} size="none">
+            <Icon size="tiny" name="circle" />
+            {statusMsg}
+          </SpacedGroup>
+          {additionalEls}
         </SpacedGroup>
       </React.Fragment>
     );
@@ -508,7 +554,8 @@ export default class Console extends Component {
 
   renderAvailable = (info) => {
     const defaultSettings = {
-      'ipAddress': info.ip,
+      ipAddress: info.ip,
+      isRealTimeMode: true,
     };
 
     return (
@@ -563,6 +610,7 @@ export default class Console extends Component {
           <Form.Input
             name="ipAddress"
             label="IP Address"
+            error={!!validation['ipAddress']}
             defaultValue={formData.ipAddress || connectionSettings.ipAddress}
             onChange={this.onFieldChange}
           />
@@ -580,8 +628,8 @@ export default class Console extends Component {
             <label htmlFor="isRealTimeMode">Real-Time Mode</label>
             <div className={styles['description']}>
               <strong>Not recommended unless on wired LAN connection.</strong>&nbsp;
-              Real-time mode will attempt to prevent delay from accumulating when mirroring. Using it
-              when on a connection with inconsistent latency will cause extremely choppy playback.
+              Real-time mode will attempt to prevent delay from accumulating when mirroring. If
+              using a WiFi connection on the Wii or computer, turning this off is recommended.
             </div>
             <Checkbox
               id="isRealTimeMode"
@@ -653,11 +701,11 @@ export default class Console extends Component {
                 <Form.Field>
                   <label htmlFor="port">Connection Port</label>
                   <div className={styles['description']}>
-                    The connection port should only be changed if you are connecting to a relay, 666 is the port all Wiis use to send data.
+                    The connection port should only be changed if you are connecting to a relay, {Ports.WII_DEFAULT} is the port all Wiis use to send data.
                   </div>
                   <Form.Input
                     name="port"
-                    defaultValue={formData.port || connectionSettings.port || "666"}
+                    defaultValue={formData.port || connectionSettings.port || `${Ports.WII_DEFAULT}`}
                     onChange={this.onFieldChange}
                   />
                 </Form.Field>
@@ -669,9 +717,14 @@ export default class Console extends Component {
     ];
 
     let errorMessage = null;
-    if (validation.targetFolder === "empty") {
+    if (validation.targetFolder === "empty" && validation.ipAddress === "empty") {
+      errorMessage = "Required inputs have been left empty";
+    } else if (validation.targetFolder === "empty") {
       errorMessage = "Target folder cannot be empty. This is where your replays will go to be " +
         "read by dolphin.";
+    } else if (validation.ipAddress === "empty") {
+      errorMessage = "IP address cannot be empty. This is the location this connection will " +
+        "connect to.";
     }
 
     return (

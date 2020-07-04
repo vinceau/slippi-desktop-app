@@ -1,7 +1,6 @@
 import _ from 'lodash';
 import React, { Component } from 'react';
 import PropTypes from 'prop-types';
-import moment from 'moment';
 import { Link } from 'react-router-dom';
 import {
   Table,
@@ -11,6 +10,7 @@ import {
   Segment,
   Message,
   Loader,
+  Visibility,
 } from 'semantic-ui-react';
 import styles from './FileLoader.scss';
 import FileRow from './FileRow';
@@ -20,6 +20,8 @@ import FolderBrowser from './common/FolderBrowser';
 import PageWrapper from './PageWrapper';
 import Scroller from './common/Scroller';
 
+const GAME_BATCH_SIZE = 50;
+
 export default class FileLoader extends Component {
   static propTypes = {
     // fileLoader actions
@@ -28,9 +30,8 @@ export default class FileLoader extends Component {
     playFile: PropTypes.func.isRequired,
     queueFiles: PropTypes.func.isRequired,
     storeScrollPosition: PropTypes.func.isRequired,
-
-    // game actions
-    gameProfileLoad: PropTypes.func.isRequired,
+    storeFileLoadState: PropTypes.func.isRequired,
+    setStatsGamePage: PropTypes.func.isRequired,
 
     // error actions
     dismissError: PropTypes.func.isRequired,
@@ -44,51 +45,61 @@ export default class FileLoader extends Component {
 
   constructor(props) {
     super(props);
+
     this.state = {
-      files: [],
       selections: [],
     };
   }
 
-  static getDerivedStateFromProps(newProps, oldState) {
-    if (newProps.store.files !== oldState.files) {
-      return {
-        files: newProps.store.files,
-        selections: [],
-      };
+  componentDidMount() {
+    if (this.props.history.action === "PUSH") {
+      // I don't really like this but when returning back to the file loader, the action is "POP"	
+      // instead of "PUSH", and we don't want to trigger the loader and ruin our ability to restore	
+      // scroll position when returning to fileLoader from a game	
+      this.props.loadRootFolder();
     }
-    return oldState;
   }
 
-  componentDidMount() {
-    const xPos = _.get(this.props.store, ['scrollPosition', 'x']) || 0;
-    const yPos = _.get(this.props.store, ['scrollPosition', 'y']) || 0;
-    window.scrollTo(xPos, yPos);
+  componentDidUpdate(prevProps) {
+    const filesHaveLoaded = _.get(this.props, ['store', 'fileLoadState', 'hasLoaded'], false);
+    const prevFilesHaveLoaded = _.get(prevProps, ['store', 'fileLoadState', 'hasLoaded'], false);
 
-    if (this.props.history.action === "PUSH") {
-      // I don't really like this but when returning back to the file loader, the action is "POP"
-      // instead of "PUSH", and we don't want to trigger the loader and ruin our ability to restore
-      // scroll position when returning to fileLoader from a game
-      this.props.loadRootFolder();
+    if (!prevFilesHaveLoaded && filesHaveLoaded) {
+      const xPos = _.get(this.props.store, ['scrollPosition', 'x']) || 0;
+      const yPos = _.get(this.props.store, ['scrollPosition', 'y']) || 0;
+
+      this.refTableScroll.scrollTo(xPos, yPos);
+
+      // Clear scroll position so that if we browse to a different folder it doesn't try to restore
+      // the position that was saved on the current folder
+      this.props.storeScrollPosition({
+        x: 0,
+        y: 0,
+      });
     }
   }
 
   componentWillUnmount() {
     this.props.storeScrollPosition({
-      x: window.scrollX,
-      y: window.scrollY,
+      x: this.refTableScroll.scrollLeft,
+      y: this.refTableScroll.scrollTop,
     });
 
-    // TODO: I added this because switching to the stats view was maintaining the scroll
-    // TODO: position of this component
-    // TODO: Might be better to do something as shown here:
-    // TODO: https://github.com/ReactTraining/react-router/issues/2144#issuecomment-150939358
-    window.scrollTo(0, 0);
+    this.props.storeFileLoadState({
+      filesToRender: this.state.filesToRender,
+      filesOffset: this.state.filesOffset,
+    });
 
     this.props.dismissError('fileLoader-global');
   }
 
-  onSelect = (selectedFile) => {
+  refTableScroll = null;
+
+  setTableScrollRef = element => {
+    this.refTableScroll = element;
+  };
+
+  onSelect = selectedFile => {
     const newSelections = [];
 
     let wasSeen = false;
@@ -106,7 +117,7 @@ export default class FileLoader extends Component {
     this.setState({
       selections: newSelections,
     });
-  }
+  };
 
   renderSidebar() {
     const store = this.props.store || {};
@@ -137,56 +148,18 @@ export default class FileLoader extends Component {
     ];
   }
 
-  processFiles(files) {
-    let resultFiles = files;
-
-    resultFiles = resultFiles.filter(file => {
-      if (file.hasError) {
-        // This will occur if an error was encountered while parsing
-        return false;
-      }
-
-      const settings = file.game.getSettings() || {};
-      if (!settings.stageId) {
-        // I know that right now if you play games from debug mode it make some
-        // weird replay files... this should filter those out
-        return false;
-      }
-
-      const metadata = file.game.getMetadata() || {};
-      const totalFrames = metadata.lastFrame || 30 * 60 + 1;
-      return totalFrames > 30 * 60;
-    });
-
-    resultFiles = _.orderBy(
-      resultFiles,
-      [
-        file => {
-          const metadata = file.game.getMetadata() || {};
-          const startAt = metadata.startAt;
-          return moment(startAt);
-        },
-        'fileName',
-      ],
-      ['desc', 'desc']
-    );
-
-    // Filter out files that were shorter than 30 seconds
-    return resultFiles;
-  }
-
   queueClear = () => {
     this.setState({
       selections: [],
     });
-  }
+  };
 
   queueFiles = () => {
     this.props.queueFiles(this.state.selections);
     this.setState({
       selections: [],
     });
-  }
+  };
 
   renderGlobalError() {
     const errors = this.props.errors || {};
@@ -207,14 +180,14 @@ export default class FileLoader extends Component {
     );
   }
 
-  renderFilteredFilesNotif(processedFiles) {
+  renderFilteredFilesNotif() {
     const store = this.props.store || {};
     if (store.isLoading) {
       return null;
     }
 
     const files = store.files || [];
-    const filteredFileCount = files.length - processedFiles.length;
+    const filteredFileCount = _.get(this.props.store, 'numFilteredFiles');
 
     if (!filteredFileCount) {
       return null;
@@ -313,14 +286,21 @@ export default class FileLoader extends Component {
     );
   }
 
-  renderFileSelection(files) {
+  renderFileSelection() {
     const store = this.props.store || {};
+
+    const allFiles = store.files || [];
+
+    const filesToRender = _.get(store, ['fileLoadState', 'filesToRender']) || [];
+    const filesOffset = _.get(store, ['fileLoadState', 'filesOffset']) || 0;
+    const hasLoaded = _.get(store, ['fileLoadState', 'hasLoaded']) || false;
+
     if (store.isLoading) {
       return this.renderLoadingState();
     }
 
     // If we have no files to display, render an empty state
-    if (!files.length) {
+    if (!allFiles.length) {
       return this.renderEmptyLoader();
     }
 
@@ -335,19 +315,39 @@ export default class FileLoader extends Component {
     );
 
     // Generate a row for every file in selected folder
-    const rows = files.map(
+    let fileIndex = 0;
+    const rows = filesToRender.map(
       file => (
         <FileRow
           key={file.fullPath}
           file={file}
           playFile={this.props.playFile}
-          gameProfileLoad={this.props.gameProfileLoad}
+          setStatsGamePage={this.props.setStatsGamePage}
           onSelect={this.onSelect}
           selectedOrdinal={this.state.selections.indexOf(file) + 1}
+          fileIndex={fileIndex++}
         />
       ),
       this
     );
+
+    const bufferMoreFiles = (e, { calculations }) => {
+      const start = filesOffset;
+      const end = Math.min(start + GAME_BATCH_SIZE, allFiles.length);
+
+      if (
+        (calculations.percentagePassed > 0.5 &&
+          start < allFiles.length) ||
+        !hasLoaded) {
+        const nextFilesToRender = allFiles.slice(start, end);
+
+        this.props.storeFileLoadState({
+          filesToRender: filesToRender.concat(nextFilesToRender),
+          filesOffset: end,
+          hasLoaded: true,
+        });
+      }
+    };
 
     return (
       <Table
@@ -358,7 +358,9 @@ export default class FileLoader extends Component {
         selectable={true}
       >
         <Table.Header>{headerRow}</Table.Header>
-        <Table.Body>{rows}</Table.Body>
+        <Visibility updateOn="repaint" as="tbody" onUpdate={bufferMoreFiles}>
+          {rows}
+        </Visibility>
       </Table>
     );
   }
@@ -382,9 +384,6 @@ export default class FileLoader extends Component {
   }
 
   renderMain() {
-    const store = this.props.store || {};
-    const files = store.files || [];
-    const processedFiles = this.processFiles(files);
     const mainStyles = `main-padding ${styles['loader-main']}`;
 
     return (
@@ -394,10 +393,13 @@ export default class FileLoader extends Component {
           text="Replay Browser"
           history={this.props.history}
         />
-        <Scroller topOffset={this.props.topNotifOffset}>
+        <Scroller
+          ref={this.setTableScrollRef}
+          topOffset={this.props.topNotifOffset}
+        >
           {this.renderGlobalError()}
-          {this.renderFilteredFilesNotif(processedFiles)}
-          {this.renderFileSelection(processedFiles)}
+          {this.renderFilteredFilesNotif()}
+          {this.renderFileSelection()}
         </Scroller>
         {this.renderQueueButtons()}
       </div>

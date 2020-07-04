@@ -11,6 +11,7 @@ import {
   Modal,
   Message,
   Loader,
+  Label,
 } from 'semantic-ui-react';
 import { stages as stageUtils } from 'slp-parser-js';
 
@@ -33,6 +34,7 @@ export default class GameProfile extends Component {
 
     // fileLoaderAction
     playFile: PropTypes.func.isRequired,
+    setStatsGamePage: PropTypes.func.isRequired,
 
     // error actions
     dismissError: PropTypes.func.isRequired,
@@ -41,6 +43,7 @@ export default class GameProfile extends Component {
     store: PropTypes.object.isRequired,
     errors: PropTypes.object.isRequired,
     topNotifOffset: PropTypes.number.isRequired,
+    statsGameIndex: PropTypes.number.isRequired,
   };
 
   refStats = null;
@@ -58,10 +61,23 @@ export default class GameProfile extends Component {
     });
   };
 
+  nextGame = () => {
+    this.props.setStatsGamePage(this.props.statsGameIndex + 1);
+  }
+
+  prevGame = () => {
+    this.props.setStatsGamePage(this.props.statsGameIndex - 1);
+  }
+
   renderContent() {
     const isLoading = _.get(this.props.store, 'isLoading') || false;
     if (isLoading) {
       return this.renderLoading();
+    }
+
+    const game = _.get(this.props, ['store', 'game']) || null;
+    if (!game) {
+      return this.renderError();
     }
 
     const gameSettings = _.get(this.props.store, ['game', 'settings']) || {};
@@ -105,9 +121,29 @@ export default class GameProfile extends Component {
     );
   }
 
+  renderError() {
+    return (
+      <Header
+        color="red"
+        inverted={true}
+        as="h1"
+        textAlign="center"
+        icon={true}
+      >
+        <Icon name="exclamation circle" />
+        Error loading file
+      </Header>
+    );
+  }
+
   renderGameProfileHeader() {
     const isLoading = _.get(this.props.store, 'isLoading') || false;
     if (isLoading) {
+      return null;
+    }
+
+    const game = _.get(this.props, ['store', 'game']) || null;
+    if (!game) {
       return null;
     }
 
@@ -144,11 +180,26 @@ export default class GameProfile extends Component {
       'horizontal-spaced-group-left-sm': !isFirstPlayer,
     });
 
+    const labelClasses = classNames({
+      [styles['player-code-display']]: true,
+      [styles['second']]: !isFirstPlayer,
+      'horizontal-spaced-group-right-sm': isFirstPlayer,
+      'horizontal-spaced-group-left-sm': !isFirstPlayer,
+    })
+
     const game = this.props.store.game;
     const playerNamesByIndex = playerUtils.getPlayerNamesByIndex(game);
+    const playerCodesByIndex = playerUtils.getPlayerCodesByIndex(game);
+
+    const playerCode = playerCodesByIndex[player.playerIndex];
 
     return (
       <Segment className={segmentClasses} textAlign="center" basic={true}>
+        {playerCode ? (
+          <Label size="large" className={labelClasses}>
+            {playerCode}
+          </Label>
+        ) : null}
         <Header inverted={true} textAlign="center" as="h2">
           {playerNamesByIndex[player.playerIndex]}
         </Header>
@@ -164,8 +215,7 @@ export default class GameProfile extends Component {
 
   renderGameDetails() {
     const gameSettings = _.get(this.props.store, ['game', 'settings']) || {};
-    const stageName =
-      stageUtils.getStageName(gameSettings.stageId) || 'Unknown';
+    const stageName = _.isNil(gameSettings.stageId) ? "Unknown" : stageUtils.getStageName(gameSettings.stageId);
 
     const duration =
       _.get(this.props.store, ['game', 'stats', 'lastFrame']) || 0;
@@ -225,6 +275,26 @@ export default class GameProfile extends Component {
     return (
       <Segment className={gameDetailsClasses} basic={true}>
         {metadataElements}
+        <div className={styles['nav-button']}>
+          <Button
+            content="Prev"
+            circular={true}
+            color="grey"
+            basic={true}
+            inverted={true}
+            size="tiny"
+            onClick={this.prevGame}
+          />
+          <Button
+            content="Next"
+            circular={true}
+            color="grey"
+            basic={true}
+            inverted={true}
+            size="tiny"
+            onClick={this.nextGame}
+          />
+        </div>
       </Segment>
     );
   }

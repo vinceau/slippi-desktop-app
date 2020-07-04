@@ -34,10 +34,22 @@ async function loadGame(gameOrPath) {
     gameToLoad = new SlippiGame(gameOrPath);
   }
 
+  let settings, stats;
+
   // Generate data here so that maybe we can add a loading state
-  gameToLoad.getSettings();
-  gameToLoad.getStats();
-  gameToLoad.getMetadata();
+  try {
+    settings = gameToLoad.getSettings();
+    stats = gameToLoad.getStats();
+    gameToLoad.getMetadata();
+  } catch {
+    return null;
+  }
+
+  // This is jank and I shouldn't do this... but the rest of the app kind of relies on these being
+  // set on the object which was legacy behavior. Preferably all of the places where this is used
+  // would call the get functions or we would create an object that wraps the result.
+  gameToLoad.settings = settings;
+  gameToLoad.stats = stats;
 
   return gameToLoad;
 }
